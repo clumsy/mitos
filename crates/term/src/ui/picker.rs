@@ -5,6 +5,8 @@ mod handlers;
 mod help;
 #[cfg(all(test, feature = "integration"))]
 mod matching_tests;
+#[cfg(all(test, feature = "integration"))]
+mod paging_tests;
 mod preview;
 mod query;
 mod replacement;
@@ -610,14 +612,31 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         }
     }
 
-    /// Move the cursor down by exactly one page. After the last page comes the first page.
+    /// Scroll up by one page, keeping the cursor on the same visible row.
+    /// Once the first page is visible, move to the first entry and stop.
     pub fn page_up(&mut self) {
-        self.move_by(self.completion_height as u32, Direction::Backward);
+        self.page(Direction::Backward);
     }
 
-    /// Move the cursor up by exactly one page. After the first page comes the last page.
+    /// Scroll down by one page, keeping the cursor on the same visible row.
+    /// Once the last page is visible, move to the last entry and stop.
     pub fn page_down(&mut self) {
-        self.move_by(self.completion_height as u32, Direction::Forward);
+        self.page(Direction::Forward);
+    }
+
+    fn page(&mut self, direction: Direction) {
+        // There are no visible result rows to page through.
+        if self.completion_height == 0 {
+            return;
+        }
+        let len = self.results.matcher.snapshot().matched_item_count();
+        (self.results.cursor, self.results.offset) = page_position(
+            self.results.cursor,
+            self.results.offset,
+            u32::from(self.completion_height),
+            len,
+            direction,
+        );
     }
 
     /// Move the cursor to the first entry
@@ -952,16 +971,12 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let rows = inner.height.saturating_sub(self.header_height()) as u32;
         self.completion_height = rows as u16;
         let rows = rows.max(1);
-        // Publication can move selection toward the end of a reordered result set.
-        // Fill the viewport from above instead of leaving most rows blank.
-        self.results.offset = self
-            .results
-            .offset
-            .min(snapshot.matched_item_count().saturating_sub(rows));
-        self.results.offset = self.results.offset.min(self.results.cursor);
-        if self.results.cursor >= self.results.offset.saturating_add(rows) {
-            self.results.offset = self.results.cursor + 1 - rows;
-        }
+        self.results.offset = visible_offset(
+            self.results.cursor,
+            self.results.offset,
+            rows,
+            snapshot.matched_item_count(),
+        );
         let offset = self.results.offset;
         let cursor = self.results.cursor.saturating_sub(offset);
         let end = offset
@@ -1607,12 +1622,143 @@ type PickerCallback<T, D> = Box<dyn Fn(&mut Context, &T, Action) -> PickerCallba
 type PickerItemCallback<T, D> =
     Box<dyn Fn(&mut Context, Option<&T>, PickerItemAction) -> PickerCallbackResult<T, D>>;
 
+/// First visible result for `rows` rows, keeping the cursor in view with minimal scrolling.
+///
+/// Publication can move selection toward the end of a reordered result set, so the
+/// viewport is also filled from above instead of leaving most rows blank.
+fn visible_offset(cursor: u32, offset: u32, rows: u32, len: u32) -> u32 {
+    let rows = rows.max(1);
+    let offset = offset.min(len.saturating_sub(rows)).min(cursor);
+    if cursor >= offset.saturating_add(rows) {
+        cursor + 1 - rows
+    } else {
+        offset
+    }
+}
+
+/// Cursor and offset after paging, as `(cursor, offset)`.
+///
+/// The viewport and cursor move together so the cursor keeps its visible row. When less
+/// than a full page remains, only the remaining distance is scrolled. Once the first or
+/// last page is visible, paging reaches the corresponding endpoint and stops.
+fn page_position(
+    cursor: u32,
+    offset: u32,
+    rows: u32,
+    len: u32,
+    direction: Direction,
+) -> (u32, u32) {
+    if len == 0 {
+        return (cursor, offset);
+    }
+    let rows = rows.max(1);
+    let cursor = cursor.min(len - 1);
+    let offset = visible_offset(cursor, offset, rows, len);
+    let row = cursor - offset;
+    let last_page = len.saturating_sub(rows);
+    let offset = match direction {
+        Direction::Forward if offset < last_page => offset + rows.min(last_page - offset),
+        Direction::Forward => return (len - 1, offset),
+        Direction::Backward if offset > 0 => offset - rows.min(offset),
+        Direction::Backward => return (0, offset),
+    };
+    (offset + row, offset)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{split_picker_area, visible_column_widths, Column};
+    use super::{page_position, split_picker_area, visible_column_widths, visible_offset, Column};
     use crate::ui::image::image_preview_layout;
+    use editor_core::movement::Direction::{Backward, Forward};
     use tui::layout::{Constraint, Size};
     use view::graphics::Rect;
+
+    #[test]
+    fn paging_keeps_the_cursor_on_its_visible_row() {
+        // 10 rows, cursor on the fourth visible row of the first page.
+        assert_eq!(page_position(3, 0, 10, 100, Forward), (13, 10));
+        assert_eq!(page_position(13, 10, 10, 100, Forward), (23, 20));
+        assert_eq!(page_position(23, 20, 10, 100, Backward), (13, 10));
+        // Paging uses the viewport, not the cursor, so a mid-page cursor never
+        // first jumps to the bottom of the current page.
+        assert_eq!(page_position(17, 12, 10, 100, Forward), (27, 22));
+    }
+
+    #[test]
+    fn paging_near_the_end_scrolls_only_the_remaining_distance() {
+        // 25 results, 10 rows: only 5 more rows exist below the second page.
+        assert_eq!(page_position(14, 10, 10, 25, Forward), (19, 15));
+        assert_eq!(page_position(16, 15, 10, 25, Backward), (6, 5));
+        assert_eq!(page_position(6, 5, 10, 25, Backward), (1, 0));
+        // The cursor never moves up while paging down.
+        let (mut cursor, mut offset) = (4, 0);
+        while offset < 15 {
+            let next = page_position(cursor, offset, 10, 25, Forward);
+            assert!(next.0 > cursor);
+            assert_eq!(next.0 - next.1, cursor - offset);
+            (cursor, offset) = next;
+        }
+    }
+
+    #[test]
+    fn paging_on_the_outer_pages_reaches_the_endpoints_and_stops() {
+        assert_eq!(page_position(19, 15, 10, 25, Forward), (24, 15));
+        assert_eq!(page_position(24, 15, 10, 25, Forward), (24, 15));
+        assert_eq!(page_position(4, 0, 10, 25, Backward), (0, 0));
+        assert_eq!(page_position(0, 0, 10, 25, Backward), (0, 0));
+    }
+
+    #[test]
+    fn paging_one_result_beyond_a_full_page_reaches_the_last_result() {
+        assert_eq!(page_position(0, 0, 10, 11, Forward), (1, 1));
+        assert_eq!(page_position(1, 1, 10, 11, Forward), (10, 1));
+        assert_eq!(page_position(10, 1, 10, 11, Forward), (10, 1));
+    }
+
+    #[test]
+    fn paging_a_single_page_moves_to_its_ends() {
+        assert_eq!(page_position(3, 0, 10, 8, Forward), (7, 0));
+        assert_eq!(page_position(3, 0, 10, 8, Backward), (0, 0));
+        assert_eq!(page_position(0, 0, 10, 0, Forward), (0, 0));
+    }
+
+    #[test]
+    fn paging_repairs_a_stale_viewport_before_moving() {
+        // Cursor below the stored viewport: rendering would show it on the last row.
+        assert_eq!(visible_offset(30, 0, 10, 100), 21);
+        assert_eq!(page_position(30, 0, 10, 100, Forward), (40, 31));
+        // Results shrank under the viewport: offset 2 is now the last page.
+        assert_eq!(page_position(4, 90, 10, 12, Forward), (11, 2));
+    }
+
+    #[test]
+    fn paged_positions_are_stable_when_rendered() {
+        for len in [1, 9, 10, 11, 25, 100] {
+            for start in 0..len {
+                for direction in [Forward, Backward] {
+                    let offset = visible_offset(start, 0, 10, len);
+                    let (mut cursor, mut offset) = (start, offset);
+                    loop {
+                        let (next, next_offset) = page_position(cursor, offset, 10, len, direction);
+                        assert!(next < len);
+                        assert_eq!(visible_offset(next, next_offset, 10, len), next_offset);
+                        match direction {
+                            Forward => assert!(next >= cursor),
+                            Backward => assert!(next <= cursor),
+                        }
+                        if next == cursor {
+                            assert_eq!(next, if direction == Forward { len - 1 } else { 0 });
+                            break;
+                        }
+                        if next_offset != offset {
+                            assert_eq!(next - next_offset, cursor - offset);
+                        }
+                        (cursor, offset) = (next, next_offset);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn preview_uses_the_right_half_of_the_picker() {

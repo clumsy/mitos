@@ -224,3 +224,62 @@ async fn stale_buffer_row_refreshes_and_empty_selection_does_nothing() -> anyhow
     f.finish().await;
     Ok(())
 }
+
+/// Screen rows of the picker's results, as (row index, text), and the selected row.
+fn picker_rows(screen: &tui::buffer::Buffer) -> (Vec<String>, usize) {
+    let width = screen.area.width as usize;
+    let rows: Vec<String> = screen
+        .content
+        .chunks(width)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+        .collect();
+    let selected = rows
+        .iter()
+        .position(|row| row.contains(" > ") && row.contains("page-"))
+        .expect("a selected result row");
+    (rows, selected)
+}
+
+fn selected_name(rows: &[String], selected: usize) -> String {
+    let row = &rows[selected];
+    let start = row.find("page-").unwrap();
+    row[start..start + "page-000.txt".len()].to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn paging_keeps_the_selected_row_on_screen_row() -> anyhow::Result<()> {
+    let names: Vec<String> = (0..400)
+        .map(|index| format!("page-{index:03}.txt"))
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = Fixture::new(&names)?;
+    f.keys("<space>b").await?;
+    f.keys("page-").await?;
+    f.keys("<down><down><down><down><down>").await?;
+    let (rows, row) = picker_rows(f.app.terminal_backend().buffer());
+    let first = selected_name(&rows, row);
+    let mut previous = first.clone();
+    for key in ["<pagedown>", "<C-d>", "<pageup>", "<C-u>"] {
+        f.keys(key).await?;
+        let (rows, now) = picker_rows(f.app.terminal_backend().buffer());
+        let name = selected_name(&rows, now);
+        assert_eq!(
+            now, row,
+            "{key} moved the selection to another screen row ({previous} -> {name})"
+        );
+        assert_ne!(previous, name, "{key} did not move");
+        previous = name;
+    }
+    assert_eq!(previous, first);
+    for (boundary, paging) in [("<end>", "<pagedown><C-d>"), ("<home>", "<pageup><C-u>")] {
+        f.keys(boundary).await?;
+        let (rows, row) = picker_rows(f.app.terminal_backend().buffer());
+        let endpoint = selected_name(&rows, row);
+        f.keys(paging).await?;
+        let (rows, now) = picker_rows(f.app.terminal_backend().buffer());
+        assert_eq!(now, row);
+        assert_eq!(selected_name(&rows, now), endpoint);
+    }
+    f.finish().await;
+    Ok(())
+}
