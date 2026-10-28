@@ -1,30 +1,55 @@
 # Version control
 
-Use Git in Mitos to review changes, stage files, browse history, and see who last
-changed a line.
+Press `Space g` to choose a Git action.
 
 | Key or command | Action |
 | --- | --- |
-| `Space g` | Browse changed files |
-| `:diff` | Review changes in the current file, including unsaved edits |
-| `Space i`, `:show-change` | Inspect the change at the cursor |
-| `:file-history` | Browse commits that changed the current file |
-| `:git-history` | Browse repository commits and their changed files |
-| `:blame` | Show the commit that last changed the current line |
-| `Space B` | Show or hide inline blame |
+| `Space g s`, `:vcs-changes` | Browse changed files |
+| `Space g d`, `:vcs-diff` | Review changes in the current file, including unsaved edits |
+| `Space g i`, `:vcs-show-change` | Inspect the change at the cursor |
+| `Space g f`, `:vcs-file-history` | Browse commits that changed the current file |
+| `Space g l`, `:vcs-history` | Browse repository commits and their changed files |
+| `Space g b`, `:vcs-blame` | Show the commit that last changed the current line |
+| `Space g t`, `:vcs-toggle-inline-blame` | Show or hide inline blame |
+| `Space g S`, `:vcs-stashes` | Browse stashes |
+| `Space g a` | Choose a Git command with completion |
+
+`s` means status, `S` stashes, `f` file history, and `l` log. `Space g c`,
+`Space g h`, and `Space g H` are aliases for status, file history, and log.
+
+For other Git actions, press `Space g a` to open the command prompt with `vcs-`
+already entered. Use completion to choose a command and enter its arguments,
+then press `Enter` to run it. You can also find these commands by searching for
+`vcs-` in the command palette (`Space ?`).
+
+Existing commands such as `:diff`, `:file-history`, and `:git-history` still work.
+`Space i` also inspects a change, and `Space B` toggles inline blame.
+
+Previously, `Space g` opened changed files directly; that action is now
+`Space g s` (or `Space g c`). To open changed files directly again, replace the
+Git menu with this binding in `config.toml`:
+
+```toml
+[keys.normal.space]
+g = "changed_file_picker"
+
+[keys.select.space]
+g = "changed_file_picker"
+```
 
 Staging, stashes, and history browsing require the `git` executable on `PATH`.
 
 ## Reviewing changes
 
-`HEAD` is your currently checked-out commit. Reviews compare two versions of a
-file without saving it or changing Git's staging area.
+`HEAD` is your checked-out commit, usually the latest commit on the current
+branch. Git's staging area holds the changes you have selected for your next
+commit. A hunk is a group of changed lines. Reviews compare two versions of a
+file without saving it or changing the staging area.
 
 ### Changed files
 
-Press `Space g` to browse changes within the workspace. To browse the whole
-repository, use `changed_file_picker_in_repository` from the command palette
-(`Space ?`).
+Press `Space g s` to browse changes within the workspace. To browse the whole
+repository, run `:vcs-repository-changes`.
 
 The picker has separate **staged** and **unstaged** columns. Each path appears
 once, including files with both kinds of changes. New files are labeled `added`
@@ -35,7 +60,7 @@ versions to compare:
 
 | Comparison | Before | After |
 | --- | --- | --- |
-| Staged | `HEAD` | Staged version (Git index) |
+| Staged | `HEAD` | Staged version (staging area) |
 | Unstaged | Staged version | File on disk |
 | Unsaved | Staged version | Current buffer, including unsaved edits |
 
@@ -88,7 +113,7 @@ between hunks, or `[G` / `]G` for the first / last hunk.
 Buffer names show the filename and comparison, for example
 `editor.rs [diff: staged]`. Separate reviews of the same comparison receive
 numbered suffixes. The statusline shows change counts, the active comparison
-engine, and whether the review is loading.
+method, and whether the review is loading.
 
 | Command | Action |
 | --- | --- |
@@ -109,18 +134,19 @@ buffer again when you reopen it.
 External updates follow your [file watching and polling settings](./configuration.md#editorfileswatch).
 Use `:diff-refresh` to retry a failed read or update a review when watching and
 polling are disabled. [Historical comparisons](#older-versions-and-comparisons)
-keep their selected revisions and captured buffer text, including when refreshed.
+keep the chosen commits and the buffer text shown when you opened them, even
+after a refresh.
 
 To review two files side by side:
 
-1. Open `Space g`, select a file, and press `Alt-o`.
+1. Press `Space g s`, select a file, and press `Alt-o`.
 2. Press `Space '` to restore the picker and select another file.
 3. Press `Ctrl-v` to open the second diff in a vertical split.
 
 Use `Ctrl-w v` / `Ctrl-w s` to split an existing review. The command palette also
 lists the diff commands.
 
-Binary files, submodules, and unresolved index conflicts show an explanation
+Binary files, submodules, and unresolved merge conflicts show an explanation
 instead of a text diff. Very large files may be rejected, or their diffs shortened
 with a notice.
 
@@ -182,15 +208,15 @@ unsaved edits. Use a count such as `3]g` to jump forward three changes.
 | --- | --- |
 | `[g` / `]g` | Select the previous / next change |
 | `[G` / `]G` | Select the first / last change |
-| `:restore-change` | Restore changes intersecting the selections from `HEAD` |
+| `:restore-change` | Restore each hunk touched by the selections from `HEAD` |
 
-Restoring replaces whole intersecting hunks in the current buffer. Use `u` to
+Restoring replaces each selected hunk in the current buffer. Use `u` to
 undo it. The command does not save the file or change Git's staging area.
 Navigation and restoration use line changes with either comparison engine.
 
 ## Git picker actions
 
-Use these shortcuts directly in the changed-file picker (`Space g`). Actions
+Use these shortcuts directly in the changed-file picker (`Space g s`). Actions
 affect the selected file's repository, or the picker's repository when no file is
 selected. Staging, unstaging, stashing, and applying stashes require
 [workspace trust](./workspace-trust.md). Use `:workspace-trust` to approve the
@@ -287,8 +313,8 @@ and selection. `Space '` restores the last picker after opening a review.
 Historical versions open in read-only buffers with syntax highlighting. In a
 historical diff, `Enter` on a removed line opens the original version; on an added
 or unchanged line it opens the updated version. When comparing with unsaved
-edits, this is the captured buffer text. `:diff-open-file` opens the current file
-instead.
+edits, it opens the text shown when you started the review. Use `:diff-open-file`
+to open the current file instead.
 
 Refreshing a historical comparison keeps the same revisions and any buffer text
 from when you opened it. Start a new comparison to include newer edits.
