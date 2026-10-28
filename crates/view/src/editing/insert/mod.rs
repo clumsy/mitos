@@ -496,6 +496,14 @@ mod tests {
             kill_to_line_start,
             kill_to_line_end,
             |doc, view| editing::join_selections(doc, view, true),
+            |doc, view| {
+                editing::move_lines(
+                    doc,
+                    view,
+                    editor_core::transform::MoveLinesDirection::Below,
+                    2,
+                )
+            },
             editing::toggle_comments,
             editing::toggle_line_comments,
             editing::toggle_block_comments,
