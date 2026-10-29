@@ -1,6 +1,6 @@
 //! Editor split layout adapter. Structural changes remain owned by `Editor`.
 use crate::{graphics::Rect, View, ViewId};
-pub use pane_layout::{Direction, Layout};
+pub use pane_layout::{Dimension, Direction, Layout};
 pub type Traverse<'a> = pane_layout::Traverse<'a, ViewId, View>;
 
 impl pane_layout::Pane<ViewId> for View {
@@ -25,7 +25,11 @@ pub struct Tree {
 impl Tree {
     pub(crate) fn new(area: Rect) -> Self {
         Self {
-            layout: pane_layout::Tree::new(area),
+            layout: pane_layout::Tree::with_minimum_size(
+                area,
+                Self::MIN_PANE_WIDTH,
+                Self::MIN_PANE_HEIGHT,
+            ),
         }
     }
     pub fn focus(&self) -> ViewId {
@@ -84,6 +88,16 @@ impl Tree {
     }
     pub fn transpose(&mut self) {
         self.layout.transpose();
+    }
+    /// Smallest pane when space permits: room for a gutter and a few columns, or one text
+    /// row above the statusline.
+    pub const MIN_PANE_WIDTH: u16 = 10;
+    pub const MIN_PANE_HEIGHT: u16 = 2;
+    pub(crate) fn resize_focus(&mut self, dimension: Dimension, delta: isize) -> bool {
+        self.layout.resize_focus(dimension, delta)
+    }
+    pub(crate) fn equalize(&mut self) {
+        self.layout.equalize();
     }
     pub fn swap_split_in_direction(&mut self, direction: Direction) -> Option<()> {
         self.layout.swap_split_in_direction(direction)
