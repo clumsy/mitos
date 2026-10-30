@@ -506,21 +506,14 @@ impl LanguageLoader for Loader {
 }
 
 impl Loader {
-    /// Compile the syntax configurations of `languages` in parallel.
+    /// Compile the syntax configurations of `languages` on the calling worker.
     ///
-    /// Languages compile independently, so the wait is the slowest language instead of
-    /// their sum. Already compiled languages return immediately.
+    /// Keeping compilation on that worker preserves the caller's concurrency limit
+    /// even for documents with many injected languages. Already compiled languages
+    /// return immediately.
     pub fn compile_syntax_configs(&self, languages: &[Language]) {
-        match languages {
-            [] => {}
-            [language] => {
-                self.language(*language).syntax_config(self);
-            }
-            _ => std::thread::scope(|scope| {
-                for &language in languages {
-                    scope.spawn(move || self.language(language).syntax_config(self));
-                }
-            }),
+        for &language in languages {
+            self.language(language).syntax_config(self);
         }
     }
 }

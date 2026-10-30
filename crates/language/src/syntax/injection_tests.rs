@@ -147,7 +147,7 @@ fn compiled_only_updates_skip_new_injections_until_a_normal_update() {
 }
 
 #[test]
-fn compiling_several_languages_in_parallel_fills_each_cache_once() {
+fn compiling_several_languages_fills_each_cache_once() {
     let (loader, _) = rust_loader();
     let languages: Vec<_> = ["json", "toml", "comment", "json"]
         .into_iter()

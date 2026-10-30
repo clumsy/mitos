@@ -81,7 +81,7 @@ impl SyntaxRequest {
         .await
     }
 
-    /// Compile the injected languages a first tree skipped, in parallel, and parse again.
+    /// Compile the injected languages a first tree skipped and parse again.
     pub async fn compute_injections(
         &self,
         missing: Vec<Language>,
